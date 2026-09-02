@@ -197,7 +197,7 @@ symbol in the dynamic symbol table. It is a struct, not a pointer:
 
 | Name | Offset | Data type | Notes |
 | :--- | :----- | :-------- | :---- |
-| `cped_slot` | `0` | pointer | Address of this thread's isolate's `ContinuationPreservedEmbedderData` slot. The slot holds a tagged V8 word; dereferencing it yields the active Node.js `AsyncContextFrame`. Lets the reader reach the active frame without any V8 internal symbol lookup. Doubles as the **gate**: an all-zero value means the SDK has not published on this thread, or has torn it down again, and no other field may be used. |
+| `cped_slot` | `0` | pointer | Address of this thread's isolate's `ContinuationPreservedEmbedderData` slot. The slot holds a tagged V8 word; dereferencing it yields the active Node.js `AsyncContextFrame`. Lets the reader reach the active frame without any V8 internal symbol lookup. Doubles as the **gate**: an all-zero value means the SDK has not published on this thread, has torn it down again, or has closed the gate temporarily, and no other field may be used while it reads zero. |
 | `als_handle` | `sizeof(void *)` | pointer | A `v8::Global<Object>` referring to the published `AsyncLocalStorage` instance in this thread's isolate. Its representation is a single V8 internal pointer; dereference it to obtain the instance's tagged address, which is the key to look up in the frame. |
 | `als_identity_hash` | `2 * sizeof(void *)` | int32, followed by 4 bytes of padding | The JS identity hash of that instance, so a reader can restrict its search to one hash bucket rather than scanning every entry. |
 | `undefined_addr` | `3 * sizeof(void *)` | tagged word | This thread's isolate's tagged address of the `undefined` singleton. Lets the reader detect "no context attached" by comparison, rather than by structurally validating whatever the frame maps our key to. |
@@ -228,6 +228,12 @@ worker thread that installs the hook publishes its own `cped_slot`, its own
 observable. Threads that never install the hook leave the struct zeroed, which
 is what lets `cped_slot` serve as the gate: no live isolate has its CPED slot at
 address zero.
+
+A closed gate is not necessarily permanent. A writer MAY close it transiently,
+for as long as some condition makes the walk unsafe — see "Garbage collection"
+for the motivating example. Readers MUST therefore re-test the gate on every
+sample, and MUST NOT infer from a zero reading that a thread is permanently
+uninstrumented.
 
 Because the contract is byte-level, "cleared" means an all-zero representation.
 A C++ writer assigning a null pointer produces that on the ELF platforms in
@@ -490,16 +496,29 @@ Note that the record itself is not a V8 heap object; it is malloc'd memory owned
 by the wrapper, so it never moves as a result of GC. Only the path to it
 involves heap objects.
 
-It would be nevertheless possible to further mitigate this risk by registering
-GC prologue and epilogue callbacks with the isolate, and either add a boolean to
-`otel_thread_ctx_nodejs_v1` that'd indicate a GC is in progress, or even better,
-capture the current thread context record's pointer in the prologue and store it
-in a new field in `otel_thread_ctx_nodejs_v1`. Since the active context doesn't
-change while the thread performs a garbage collection, this'd allow the reader
-to even associate GC activity with the context that was active when GC started.
-At this stage we are not convinced that this complication is meaningful,
-especially since GC activity happens in response to global heap usage and is
-thus not semantically part of the asynchronous context task.
+Should that walk prove unsafe, a writer MAY close the gate for the duration of a
+collection: register GC prologue and epilogue callbacks on the isolate, zero
+`cped_slot` in the prologue and restore it in the epilogue, with the same
+compiler fence and volatile store the other gate writes use. Readers need no
+change at all as they already stop at a zero gate, and are forbidden from
+treating it as permanent.
+
+Losing the trace context for GC samples is a design decision. A collection is
+triggered by whole-heap pressure that the active request may have contributed
+little to, so attributing that time to whichever context happened to be current
+would manufacture a plausible-looking but ultimately wrong attribution.
+
+We are deliberately not going further at the moment. The obvious next step would
+be capturing the active record's pointer in the prologue and publishing it in a
+new field, so that samples during a collection keep their context. It would also
+need a boolean to accompany it, because a zero field value cannot distinguish
+"not collecting" from "collecting with no context attached", and the second
+would send the reader down exactly the walk this is meant to prevent. It would
+also have the writer perform a constrained version of the reader's walk from
+inside a GC callback, where JS execution is prohibited, `GetCurrentContext()`
+may be empty and so a `Global<Context>` must be retained solely for the lookup.
+That is a lot of machinery to preserve an attribution we argue above should not
+be made.
 
 ### Reader-visible consequences of incomplete teardown
 
