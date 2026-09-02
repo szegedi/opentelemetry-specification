@@ -533,6 +533,39 @@ may be empty and so a `Global<Context>` must be retained solely for the lookup.
 That is a lot of machinery to preserve an attribution we argue above should not
 be made.
 
+### Sampling a thread that is not executing JavaScript
+
+A thread can be sampled while no JavaScript is on its stack at all: an event
+loop with nothing to do is parked in the libuv poll. `cped_slot` addresses a
+field of the isolate rather than anything on the JS stack, so the read itself is
+unaffected. Node keeps an isolate entered for the whole lifetime of the event
+loop it serves, both on the main thread and in worker threads, so the
+not-entered state barely arises while an application is running. The only loop
+that does spin with no isolate entered is the one a worker runs while it waits
+for the platform to release its isolate during teardown, by which point our gate
+is already closed.
+
+When the loop is idle, the CPED slot holdswhatever frame was current at the
+outermost level. Node unwinds the slot as the stack unwinds; every entry into
+JavaScript goes through `InternalCallbackScope`, which exchanges the frame on
+entry and restores the prior one on scope exit. Tick, timer and promise runners
+do the same explicitly. Thus, an idle loop correctly does not retain the frame
+of the request that last ran. It normally exposes `undefined`, which the
+reader rejects by comparison against `undefined_addr`. The exception would be a
+context installed with `enterWith` at the outermost level of the JavaScript
+program and never cleared, which does persist. This is not a common practice,
+and if it occurs, it could rightfully be considered the top-level context of the
+program.
+
+This is also mostly a wall-clock concern. A thread parked in the poll consumes
+no CPU and so is never sampled by a CPU-time profiler.
+
+We do not publish an "executing JavaScript" flag for readers to consult. A
+reader that can walk the target's stack can already tell a thread parked in the
+poll from one that is running, which is all such a flag would say; and
+maintaining it would mean marking entry to and exit from JavaScript, which is
+per-call work on the hottest path this design exists to keep native code off.
+
 ### Reader-visible consequences of incomplete teardown
 
 An SDK that skips the teardown steps above does not endanger readers directly; a
