@@ -115,6 +115,19 @@ reason the mechanism is affordable in Node.js.
   backed by `AsyncContextFrame` (see "Runtime requirements").
 * Non-Linux platforms. As in OTEPs 4719 and 4947, the discovery contract is
   ELF/TLSDESC-based and Linux-specific.
+* Attributing work that runs outside the isolate's own thread. Node.js
+  dispatches filesystem, DNS, zlib and asynchronous crypto work to the libuv
+  thread pool, and those threads run no JavaScript and host no isolate, so they
+  never publish a discovery struct. Their struct stays zeroed, a reader finds
+  the gate closed and reports no context. Such a thread would in fact suit OTEP
+  4947's original mechanism well: it runs one work item at a time, so the thread
+  genuinely is the unit of context for that item's duration. Unfortunately we
+  have no way to submit a record to these threads. The record would have to be
+  captured where the work is submitted, installed on the pool thread when the
+  work item starts, cleared when it ends, and kept alive throughout even if the
+  span owning it finished in the meantime. A submission mechanism would need to
+  be built inside Node.js, so supporting this would mean changing Node.js
+  itself, and is outside this proposal's scope.
 
 ## Internal details
 
