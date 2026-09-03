@@ -45,17 +45,19 @@ mechanism acts on two levels:
   continuation changes it effects itself (e.g. entering IO and time callbacks).
 
 Said otherwise, CPED is the V8 mechanism and the async-context frame is Node's
-application of it. An SDK that puts its record holder into an
-`AsyncLocalStorage` therefore gets context-switch tracking for free, at exactly
-the granularity the runtime uses, with no native call on attach or detach and no
-cost at all when nothing is attached.
+application of it. An SDK, or any other Node.js tracing code, that puts its
+record holder into an `AsyncLocalStorage` therefore gets context-switch tracking
+for free, at exactly the granularity the runtime uses, with no native call on
+attach or detach and no cost at all when nothing is attached.
 
 What is left is to tell a reader how to walk from the isolate to the record.
 That is what this proposal specifies.
 
 ## Explanation
 
-A Node.js SDK publishes context by:
+"The SDK" below is shorthand for whichever component publishes the context — an
+OpenTelemetry SDK, a vendor tracer, or any other Node.js tracing code. Such a
+component publishes context by:
 
 1. Creating one `AsyncLocalStorage` instance per isolate, and telling its native
    addon about it.
@@ -136,10 +138,10 @@ Reused from OTEP 4947:
 * `threadlocal.attribute_key_map` — unchanged, including its append-only
   semantics.
 
-This proposal adds four more process attributes. All four are V8 layout
-constants captured from the V8 headers the addon was compiled against, so that a
-reader does not have to derive them from the target's pointer-compression and
-sandbox build flags, nor look up V8 internal symbols:
+The four added attributes are all V8 layout constants captured from the V8
+headers the addon was compiled against, so that a reader does not have to derive
+them from the target's pointer-compression and sandbox build flags, nor look up
+V8 internal symbols:
 
 | Key | Meaning |
 | :-- | :------ |
