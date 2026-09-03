@@ -29,6 +29,8 @@ interleaves many logical contexts on one thread per isolate, so "the context on
 this thread" is not a useful concept there. It needs a discovery mechanism of
 its own rather than an implementation of the existing one.
 
+## How Node.js tracks the active continuation
+
 What we really need to track, then, is the active continuation on a given
 isolate. Fortunately Node.js already has a way to attach data to one, and the
 mechanism acts on two levels:
@@ -63,9 +65,7 @@ component publishes context by:
    addon about it.
 2. Allocating a **Thread-Local Context Record** (OTEP 4947's format, unchanged)
    behind a JavaScript wrapper object for every tracing span, and storing a raw
-   pointer to the record in the wrapper's internal field. (JavaScript objects
-   can be allocated with space for internal fields, which are typically used to
-   store pointers to native data structures.)
+   pointer to the record in the wrapper's internal field.
 3. Attaching context by storing that wrapper in the `AsyncLocalStorage` (and
    detaching it by storing `undefined`). Both are pure-JavaScript operations; no
    native code runs for them.
@@ -145,7 +145,7 @@ V8 internal symbols:
 
 | Key | Meaning |
 | :-- | :------ |
-| `threadlocal.js_object_record_offset` | Byte offset, within the wrapper JSObject, of the slot holding the pointer to its record (internal field 0). |
+| `threadlocal.js_object_record_offset` | Byte offset, within the wrapper JSObject, of the slot holding the pointer to its record. That slot is internal field 0: JavaScript objects can be allocated with space for internal fields, which are typically used to hold pointers to native data structures. |
 | `threadlocal.tagged_size` | V8's tagged-pointer width in bytes: 4 with pointer compression, 8 without. |
 | `threadlocal.js_map_table_offset` | Byte offset, within a V8 `JSMap`, of the tagged pointer to its backing `OrderedHashMap` table. |
 | `threadlocal.ordered_hash_map_header_size` | Size of the `OrderedHashMap` header preceding its element-count fields. |
