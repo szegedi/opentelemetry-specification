@@ -29,8 +29,9 @@ interleaves many logical contexts on one thread per isolate, so "the context on
 this thread" is not a useful concept there. It needs a discovery mechanism of
 its own rather than an implementation of the existing one.
 
-Fortunately, Node.js already has a way to attach data to asynchronous contexts.
-The mechanism acts on two levels:
+What we really need to track, then, is the active continuation on a given
+isolate. Fortunately Node.js already has a way to attach data to one, and the
+mechanism acts on two levels:
 
 * **V8** provides `ContinuationPreservedEmbedderData` (CPED), a per-isolate slot
   holding one value that V8 exchanges as it moves between continuations. V8
@@ -43,11 +44,11 @@ The mechanism acts on two levels:
   takes care to install the right `AsyncContextFrame` into the CPED slot on the
   continuation changes it effects itself (e.g. entering IO and time callbacks).
 
-So CPED is the V8 mechanism and the async-context frame is Node's application of
-it. An SDK that puts its record holder into an `AsyncLocalStorage` therefore
-gets context-switch tracking for free, at exactly the granularity the runtime
-uses, with no native call on attach or detach and no cost at all when nothing is
-attached.
+Said otherwise, CPED is the V8 mechanism and the async-context frame is Node's
+application of it. An SDK that puts its record holder into an
+`AsyncLocalStorage` therefore gets context-switch tracking for free, at exactly
+the granularity the runtime uses, with no native call on attach or detach and no
+cost at all when nothing is attached.
 
 What is left is to tell a reader how to walk from the isolate to the record.
 That is what this proposal specifies.
