@@ -7,8 +7,9 @@ the SDK writing a thread-local on every context switch.
 
 This proposal is the document promised by the ["Alternative for Node.js
 support"](4947-thread-ctx.md#alternative-for-nodejs-support) section of OTEP
-4947. It reuses that OTEP's record format verbatim and its process-context
-conventions from [OTEP 4719: Process Context](4719-process-ctx.md); only the
+4947. It explains how the OTEP-4947 record format and the
+[OTEP-4719](4719-process-ctx.md) process-context conventions can be discovered
+and used within a Node.js application. Both are reused verbatim; only the
 discovery mechanism is Node.js-specific.
 
 ## Motivation
