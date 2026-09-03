@@ -124,7 +124,9 @@ reason the mechanism is affordable in Node.js.
 
 As in OTEP 4947, process-scoped data is published as entries in
 `ProcessContext.attributes` per OTEP 4719, so a reader reads it once rather than
-per sample. This proposal reuses two keys unchanged and adds four.
+per sample. This proposal uses the existing values with an alternate
+`threadlocal.schema_version` of `nodejs_v1_dev`, and otherwise adds four more
+process attributes.
 
 Reused from OTEP 4947:
 
@@ -195,7 +197,8 @@ structures are part of the contract.
 ### Thread-Local Variable
 
 A single thread-local, `otel_thread_ctx_nodejs_v1`, is exported as an ELF TLS
-symbol in the dynamic symbol table. It is a struct, not a pointer:
+symbol in the dynamic symbol table, providing information specific to the
+Node.js runtime to find the OTEP-4947 record. It is a struct, not a pointer:
 
 | Name | Offset | Data type | Notes |
 | :--- | :----- | :-------- | :---- |
