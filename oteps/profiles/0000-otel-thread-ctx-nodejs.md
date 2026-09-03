@@ -14,33 +14,20 @@ discovery mechanism is Node.js-specific.
 
 ## Motivation
 
-OTEP 4947 publishes a pointer to the active **Thread-Local Context Record** in
-an ELF thread-local (`otel_thread_ctx_v1`), which the SDK updates whenever
-context is attached to or detached from a thread. OTEP 4947 lists Node.js among
-the runtimes it does not expect to support, for two reasons:
+[OTEP 4947](4947-thread-ctx.md) lists Node.js among the runtimes it does not
+expect to support, on account of the high cost of FFI and the heavily
+asynchronous nature of the runtime.
 
-* **The execution-context model does not match.** Node.js runs application code
-  on a single thread per V8 isolate and interleaves many logical contexts on it.
-  The unit that carries OpenTelemetry context is the asynchronous context, not
-  the OS thread. A thread-local that named "the context active on this thread"
-  would have to be rewritten at every one of the very frequent transitions
-  between them.
-* **The write path is too expensive.** Updating a native thread-local from
-  JavaScript means crossing the Node-API boundary. Context attach and detach are
-  hot paths; paying an FFI crossing on each is not viable, and it would be paid
-  on every transition whether or not any reader is attached.
-
-The consequence is that Node.js is the only runtime OTEP 4947 surveys with no
+The consequence is that Node.js is the only runtime that OTEP surveys with no
 out-of-process context mechanism at all: six of them get one from the
 thread-local it specifies, and Go already has pprof labels, which readers
 consume today under its own `go_pprof_labels_v1` schema version.
 
-There's a structural reason for this gap. Elsewhere the OS thread is a usable
-handle, because a request occupies one thread — or in Go one goroutine, carrying
-labels that travel with it — for its duration, so "the context on this thread"
-is a useful concept. Given the interleaving described above, the same concept is
-not useful with Node.js. It therefore needs a discovery mechanism of its own
-rather than an implementation of the existing one.
+The reason is Node.js' concurrency model. Elsewhere the OS thread is a usable
+handle, because a request occupies one thread for its duration. Node.js
+interleaves many logical contexts on one thread per isolate, so "the context on
+this thread" is not a useful concept there. It needs a discovery mechanism of
+its own rather than an implementation of the existing one.
 
 Fortunately, Node.js already has a way to attach data to asynchronous contexts.
 The mechanism acts on two levels:
