@@ -254,13 +254,6 @@ Unchanged from OTEP 4947, including field offsets, `attrs-data` encoding, the
 for repeated key indexes, and the recommendation to keep the total record at or
 under 640 bytes. Readers MUST be able to use the same parser for both.
 
-One Node.js-specific consequence of storing the wrapper in an
-`AsyncLocalStorage` is that a single record can be reachable from many frames at
-once: every async-context frame that inherited the wrapper reference presents
-the same record. This makes the `valid` byte more useful here than in OTEP 4947
-(see "Context detachment" below) and it makes updating `trace-flags` after
-publication cheap as well.
-
 ### Publication Protocol
 
 #### 1. Isolate initialization
@@ -308,7 +301,10 @@ as weak references to wrappers with garbage collection callbacks.)
 
 #### 3. Context detachment
 
-There are two mechanisms, for two different scopes:
+A wrapper stored in an `AsyncLocalStorage` stays reachable from every
+async-context frame derived from the one it was stored in, so several frames can
+present the same record at once. That gives detachment two mechanisms, for two
+different scopes:
 
 * **Detach from the current frame** — store `undefined` in the
   `AsyncLocalStorage`. This affects the current frame and frames derived from
