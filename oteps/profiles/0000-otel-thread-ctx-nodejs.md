@@ -583,9 +583,8 @@ a reader exists. This is the option OTEP 4947 already declined for Node.js.
 
 **A native-side map keyed by async ID.** The SDK could maintain its own native
 structure mapping async IDs to records and publish a pointer to it. Rejected: it
-reintroduces a native call per transition to keep the map current, requires the
-SDK to shadow bookkeeping the runtime already does, and gives readers a bespoke
-structure to parse rather than a V8 one whose layout can be published.
+reintroduces a native call per transition to keep the map current, and would
+require extra bookkeeping.
 
 **Publishing the record pointer in a JS-visible field instead of an internal
 field.** Rejected: a JS-visible property is a tagged value subject to V8's
