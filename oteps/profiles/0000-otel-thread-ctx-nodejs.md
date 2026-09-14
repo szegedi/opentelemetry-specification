@@ -592,13 +592,6 @@ property-storage rules (in-object versus backing store, dictionary transitions),
 so its location is neither stable nor cheaply computable by a reader. An
 internal field is at a fixed offset and holds a raw aligned pointer.
 
-**Pointing internal field 0 at a writer-side structure rather than the record.**
-An earlier iteration of the prototype stored a pointer to the native wrapper
-object and published its record-pointer offset as a fifth constant, so readers
-made two hops. Rejected: it put a writer-implementation detail into the reader
-contract for no benefit. Pointing directly at the record removed both the hop
-and the published offset.
-
 ## Prototypes
 
 * **Writers:**
