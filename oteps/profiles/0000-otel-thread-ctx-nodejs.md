@@ -12,33 +12,42 @@ support"](4947-thread-ctx.md#alternative-for-nodejs-support) section of OTEP
 and used within a Node.js application. Both are reused verbatim; only the
 discovery mechanism is Node.js-specific.
 
+The design discussed within has been implemented in
+[polarsignals/custom-labels](https://github.com/polarsignals/custom-labels/tree/otel-thread-ctx-wip)
+and used and validated in vendor specific tooling; this document aims to
+generalise it for broader community adoption.
+
 ## Motivation
 
-[OTEP 4947](4947-thread-ctx.md) lists Node.js among the runtimes it does not
-expect to support, on account of the high cost of FFI and the heavily
-asynchronous nature of the runtime.
+Node.js's concurrency model relies on using a single thread per isolate that is
+used to multiplex many logical contexts, and it's common to constantly switch
+between them.
 
-The consequence is that Node.js is the only runtime that OTEP surveys with no
-out-of-process context mechanism at all: six of them get one from the
-thread-local it specifies, and Go already has pprof labels, which readers
-consume today under its own `go_pprof_labels_v1` schema version.
+While there are callbacks for detecting these context switches,
+they carry high costs and are otherwise problematic, and for that reason
+they are also deprecated and will be removed in future Node.js versions.
 
-The reason is Node.js' concurrency model. Elsewhere the OS thread is a usable
-handle, because a request occupies one thread for its duration. Node.js
-interleaves many logical contexts on one thread per isolate, so "the context on
-this thread" is not a useful concept there. It needs a discovery mechanism of
-its own rather than an implementation of the existing one.
+As called out in [OTEP 4947](4947-thread-ctx.md), this combination of constant
+switching and high cost of running code at switches means an implementation of
+that spec would not be efficient for current versions of Node.js.
+
+Thus, similarly to how Go is already supported in OTEP 4947, we propose a
+modified Node.js-specific extension to the spec that can be efficiently
+implemented.
 
 ## How Node.js tracks the active continuation
 
 What we really need to track, then, is the active continuation on a given
-isolate. Fortunately Node.js already has a way to attach data to one, and the
+thread. Fortunately Node.js already has a way to attach data to one, and the
 mechanism acts on two levels:
 
 * **V8** provides `ContinuationPreservedEmbedderData` (CPED), a per-isolate slot
   holding one value that V8 exchanges as it moves between continuations. V8
   attaches no meaning to the value; it only guarantees that the slot tracks the
-  active continuation.
+  active continuation. **Isolate** is the V8 instance of a JavaScript runtime
+  with its own isolated heap, hence the name. Node.js creates exactly one
+  isolate for each thread executing JavaScript, so threads map to isolates
+  one-to-one.
 * **Node.js** decides what to put there. When its `AsyncLocalStorage` is backed
   by **`AsyncContextFrame`** (a Node.js construct, not a V8 one) the value in
   the CPED slot is an async-context frame, realized as a JavaScript `Map` from
@@ -85,6 +94,11 @@ for the life of the isolate, so it is written once at initialization rather than
 on every context switch. This is the essential difference from OTEP 4947 and the
 reason the mechanism is affordable in Node.js.
 
+To be able to find the "Thread-Local Context Record" in memory, this spec
+requires the reader of the thread context (such as the eBPF Profiler) to know
+enough V8/Node.js details to be able to read their representation of JavaScript
+Maps. See "Trade-offs and mitigations" below for more details.
+
 ### Goals
 
 * **Reuse the record format.** The bytes readers parse are identical to OTEP
@@ -109,16 +123,9 @@ reason the mechanism is affordable in Node.js.
 * Attributing work that runs outside the isolate's own thread. Node.js
   dispatches filesystem, DNS, zlib and asynchronous crypto work to the libuv
   thread pool, and those threads run no JavaScript and host no isolate, so they
-  never publish a discovery struct. Their struct stays zeroed, a reader finds
-  the gate closed and reports no context. Such a thread would in fact suit OTEP
-  4947's original mechanism well: it runs one work item at a time, so the thread
-  genuinely is the unit of context for that item's duration. Unfortunately we
-  have no way to submit a record to these threads. The record would have to be
-  captured where the work is submitted, installed on the pool thread when the
-  work item starts, cleared when it ends, and kept alive throughout even if the
-  span owning it finished in the meantime. A submission mechanism would need to
-  be built inside Node.js, so supporting this would mean changing Node.js
-  itself, and is outside this proposal's scope.
+  never publish a discovery struct. There is currently no mechanism in Node.js
+  that we could use to support this thread pool. Such a mechanism would mean
+  changing Node.js itself, and is outside this proposal's scope.
 
 ## Internal details
 
@@ -324,6 +331,9 @@ current frame when the span ends in addition to invalidating the record.
 
 #### 4. Growing the attribute payload
 
+A memory-optimizing implementation can initially allocate a small record with
+space for only few small attributes, and have a mechanism to grow it if needed.
+
 OTEP 4947 permits appending to `attrs-data` in place, publishing the new extent
 by writing `attrs-data-size` last. That applies here unchanged when the existing
 allocation has room.
@@ -362,11 +372,11 @@ interrupted.
 
 Unchanged from OTEP 4947's process-initialization steps, except that the reader
 looks for `otel_thread_ctx_nodejs_v1` in the dynamic symbol tables, and treats a
-`threadlocal.schema_version` of `nodejs_v1` as selecting this walk. A reader
-MUST also read the four V8 layout constants before sampling; they are not
-optional for this schema, and a reader that finds `schema_version` set to
-`nodejs_v1` without them SHOULD treat the process context as incomplete and
-re-read it on the next update.
+`threadlocal.schema_version` of `nodejs_v1` or `nodejs_v1_dev` as selecting this
+walk. A reader MUST also read the four V8 layout constants before sampling; they
+are not optional for this schema, and a reader that finds `schema_version` set
+to either `nodejs_v1` or `nodejs_v1_dev` without them SHOULD treat the process
+context as incomplete and re-read it on the next update.
 
 #### 2. Thread sampling
 
@@ -386,10 +396,9 @@ auto* acf = untag<JSMap>(*ctx->cped_slot);
 auto* table = untag<OrderedHashMap>(
     *(tagged_ptr*)((char*)acf + js_map_table_offset));
 
-// Find the entry keyed by our AsyncLocalStorage instance. A reader may use the
-// published identity hash to walk a single bucket; a simpler one may scan all
-// entries. Bucket and entry layout follow from ordered_hash_map_header_size and
-// tagged_size.
+// Find the entry keyed by our AsyncLocalStorage instance. A reader uses the
+// published identity hash to walk a single bucket. Bucket and entry layout
+// follow from ordered_hash_map_header_size and tagged_size.
 uintptr_t als = *ctx->als_handle;
 Entry* e = find_entry(table, als, ctx->als_identity_hash);
 if (!e) return NO_CONTEXT;  // not in this frame
@@ -511,18 +520,6 @@ triggered by whole-heap pressure that the active request may have contributed
 little to, so attributing that time to whichever context happened to be current
 would manufacture a plausible-looking but ultimately wrong attribution.
 
-We are deliberately not going further at the moment. The obvious next step would
-be capturing the active record's pointer in the prologue and publishing it in a
-new field, so that samples during a collection keep their context. It would also
-need a boolean to accompany it, because a zero field value cannot distinguish
-"not collecting" from "collecting with no context attached", and the second
-would send the reader down exactly the walk this is meant to prevent. It would
-also have the writer perform a constrained version of the reader's walk from
-inside a GC callback, where JS execution is prohibited, `GetCurrentContext()`
-may be empty and so a `Global<Context>` must be retained solely for the lookup.
-That is a lot of machinery to preserve an attribution we argue above should not
-be made.
-
 ### Sampling a thread that is not executing JavaScript
 
 A thread can be sampled while no JavaScript is on its stack at all: an event
@@ -535,7 +532,7 @@ that does spin with no isolate entered is the one a worker runs while it waits
 for the platform to release its isolate during teardown, by which point our gate
 is already closed.
 
-When the loop is idle, the CPED slot holdswhatever frame was current at the
+When the loop is idle, the CPED slot holds whatever frame was current at the
 outermost level. Node unwinds the slot as the stack unwinds; every entry into
 JavaScript goes through `InternalCallbackScope`, which exchanges the frame on
 entry and restores the prior one on scope exit. Tick, timer and promise runners
@@ -555,25 +552,6 @@ reader that can walk the target's stack can already tell a thread parked in the
 poll from one that is running, which is all such a flag would say; and
 maintaining it would mean marking entry to and exit from JavaScript, which is
 per-call work on the hottest path this design exists to keep native code off.
-
-### Reader-visible consequences of incomplete teardown
-
-An SDK that skips the teardown steps above does not endanger readers directly; a
-cross-process read of freed or unmapped memory fails or yields garbage, it does
-not fault the reader. The hazard is that a stale walk can still *succeed*. A
-garbage word read through a dangling `cped_slot`, untagged as a `JSMap` and
-walked, may reach an address whose byte 24 happens to be `1`, at which point the
-reader publishes a fabricated trace ID and span ID attached to a genuine sample.
-The probability is low; the consequence is corrupt telemetry that looks
-legitimate, which is considerably harder to diagnose than a dropped sample. This
-can happen in practice, because worker-isolate teardown happens while the
-process continues to run and be sampled.
-
-**Mitigation:** the MUST above, which closes the walk at its root for one store.
-Readers should not rely on writers alone, though, which is why record validation
-is recommended in the reading protocol: `valid == 1` is the minimum, and
-checking `attrs-data-size` for plausibility and the `OrderedHashMap` bucket
-count for being a power of two are cheap enough to be worth doing.
 
 ### Memory overhead
 
@@ -621,26 +599,6 @@ object and published its record-pointer offset as a fifth constant, so readers
 made two hops. Rejected: it put a writer-implementation detail into the reader
 contract for no benefit. Pointing directly at the record removed both the hop
 and the published offset.
-
-## Open questions
-
-1. **GC and object motion.** Is the argument in "Garbage collection" above
-   airtight across the V8 versions Node 22–26 ship, including parallel
-   scavenging? Do we want to expose indication of GC going on (or even the
-   current record during GC) in the thread local data structure?
-2. **`attrs-data` and worker threads.** `attribute_key_map` is process-scoped
-   per OTEP 4719, while records are per-isolate. Should the OTEP require all
-   isolates in a process to agree on the key map (the simple reading, and what a
-   single shared map implies), or is per-isolate divergence worth supporting?
-3. **Should the V8 layout constants live in `threadlocal.*` at all?** They
-   describe the runtime, not the thread-context mechanism, and a future
-   non-profiling reader might want them too. A separate namespace (`v8.*`?)
-   would be more honest but fragments the keys a reader of this schema must
-   collect.
-4. **Naming.** `threadlocal.*` is inherited from OTEP 4947, but nothing in this
-   proposal is thread-local except the discovery struct. Keeping the prefix
-   maximizes reuse of OTEP 4947's conventions and reader code; it is nonetheless
-   a slight misnomer here.
 
 ## Prototypes
 
