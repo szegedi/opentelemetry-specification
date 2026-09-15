@@ -353,6 +353,14 @@ Before an isolate is torn down, the SDK MUST clear the thread-local, and MUST
 clear `cped_slot` **first**, as a volatile store followed by a compiler fence.
 It SHOULD additionally clear internal field 0 of all live wrappers known to it.
 
+An SDK that releases the records' memory at teardown — which it will typically
+want to do, since a leak checker running before the runtime's own late-shutdown
+finalizers will otherwise report them — MUST clear internal field 0 before the
+release, and the release MUST NOT be reordered before that store. Releasing a
+record while a wrapper still points at it is worse than leaking it: the
+allocator may hand the memory out again, and a reader that reaches it can find
+bytes that pass validation.
+
 Clearing wrapper internal fields is proportional to the number of live wrappers
 and requires the SDK to track them all; it is defense in depth, and is redundant
 once the thread-local is cleared, since a reader that stops at `cped_slot == 0`
