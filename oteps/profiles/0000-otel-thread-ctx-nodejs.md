@@ -263,6 +263,10 @@ under 640 bytes. Readers MUST be able to use the same parser for both.
 
 ### Publication Protocol
 
+Every requirement below exists because a reader's correctness depends on it: it
+is the set of assumptions the reader makes, restated as obligations on the
+writer. Where an SDK is free to choose, this section says `MAY` or says nothing.
+
 #### 1. Isolate initialization
 
 On first use, per isolate, the SDK:
