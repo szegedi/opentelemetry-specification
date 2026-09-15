@@ -113,5 +113,6 @@ words:
   - uprobes # linux feature: https://www.brendangregg.com/blog/2015-06-28/linux-ftrace-uprobe.html
   - Parca # company: https://www.parca.dev/
   - unsuffixed
+  - CPED # V8 internal: ContinuationPreservedEmbedderData
   - cijothomas
   - martincostello
