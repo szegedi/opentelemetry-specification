@@ -360,8 +360,9 @@ never reaches a wrapper.
 
 Neither omission can crash a reader as reading freed or unmapped memory in
 another process fails or returns garbage rather than faulting the reader. The
-risk is misattribution instead — see "Reader-visible consequences of incomplete
-teardown" below.
+risk is misattribution instead: a stale walk through a dangling `cped_slot` can
+still *succeed* and attach a fabricated trace ID to a genuine sample, which is
+why readers SHOULD validate the record as described in the reading protocol.
 
 ### Reading Protocol
 
